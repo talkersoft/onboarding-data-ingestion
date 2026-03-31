@@ -14,6 +14,21 @@ A distributed Node.js system that receives customer onboarding data, queues it v
 
 This tears down any previous run, builds all services, loads test data (inserts, updates, and intentional validation errors), runs SQL queries, and opens the Seq log viewer in your browser.
 
+## Searching Logs
+
+After the demo, Seq opens at **http://localhost:5380**. Use the search bar to filter:
+
+| Find | Search |
+|---|---|
+| Trace a request | `correlationId = '<id>'` |
+| Inserts only | `operation = 'INSERTED'` |
+| Updates only | `operation = 'UPDATED'` |
+| Errors/warnings | `@Level = 'Warning' or @Level = 'Error'` |
+| By service | `service = 'onboarding-api'` |
+| By account | `accountNo = 'ACCT-2001'` |
+
+See [logs.md](logs.md) for more examples.
+
 ## Tear Down
 
 ```bash
