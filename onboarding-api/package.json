@@ -1,0 +1,13 @@
+{
+  "name": "onboarding-api",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "uuid": "^10.0.0",
+    "amqplib": "^0.10.4"
+  }
+}

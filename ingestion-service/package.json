@@ -1,0 +1,12 @@
+{
+  "name": "ingestion-service",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "amqplib": "^0.10.4",
+    "pg": "^8.13.0"
+  }
+}

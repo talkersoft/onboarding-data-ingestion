@@ -1,0 +1,5 @@
+[
+  { "accountNo": "ACCT-2001", "firstName": "John",    "lastName": "Doe",    "email": "john.doe@newcompany.com",   "address": "150 Enterprise Ave, New York, NY 10002", "notes": "Migrated from personal plan",     "description": "Migrated to enterprise plan" },
+  { "accountNo": "ACCT-2003", "firstName": "Robert",  "lastName": "Jones",  "email": "robert.jones@yahoo.com",    "address": "300 Broadway, Chicago, IL 60601",         "notes": "Legal name change processed",     "description": "Name change — was Bob" },
+  { "accountNo": "ACCT-2005", "firstName": "Charlie", "lastName": "Brown",  "email": "charlie.b@newdomain.com",   "address": "550 New Office Pkwy, Denver, CO 80202",   "notes": "Company relocated — new domain",  "description": "Email domain changed" }
+]

@@ -1,0 +1,11 @@
+{
+  "name": "data-loader",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "node src/loader.js"
+  },
+  "dependencies": {
+    "uuid": "^9.0.0"
+  }
+}

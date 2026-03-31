@@ -1,0 +1,8 @@
+{
+  "name": "onboarding-data-ingestion",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "demo": "./demo.sh"
+  }
+}

@@ -1,0 +1,10 @@
+[
+  { "accountNo": "ACCT-2001", "firstName": "John",    "lastName": "Doe",    "email": "john.doe@example.com",       "address": "100 Main St, New York, NY 10001",    "notes": "Signed up via web form",          "description": "New customer signup" },
+  { "accountNo": "ACCT-2002", "firstName": "Alice",   "lastName": "Smith",  "email": "alice.smith@gmail.com",      "address": "200 Market St, Boston, MA 02101",    "notes": "Referred by Bob Williams",        "description": "Referred by Bob" },
+  { "accountNo": "ACCT-2003", "firstName": "Bob",     "lastName": "Jones",  "email": "bob.jones@yahoo.com",        "address": "300 Broadway, Chicago, IL 60601",    "notes": "Prefers email communication",     "description": "Standard onboarding" },
+  { "accountNo": "ACCT-2004", "firstName": "Amanda",  "lastName": "Green",  "email": "amanda.green@gmail.com",     "address": "400 Tech Park Dr, Austin, TX 73301", "notes": "Enterprise trial — 30 day eval",  "description": "Enterprise trial" },
+  { "accountNo": "ACCT-2005", "firstName": "Charlie", "lastName": "Brown",  "email": "charlie.brown@company.com",  "address": "500 Corporate Blvd, Denver, CO 80201", "notes": "Multi-user corporate license",  "description": "Corporate account" },
+  { "accountNo": "ACCT-2002", "firstName": "Alice",   "lastName": "Smith",  "email": "alice.smith@gmail.com",      "address": "200 Market St, Boston, MA 02101",    "notes": "Upgraded to premium tier",        "description": "Updated — now premium member" },
+  { "accountNo": "ACCT-2006", "firstName": "Andrew",  "lastName": "Peters", "email": "andrew.peters@gmail.com",    "address": "600 Partner Way, Seattle, WA 98101", "notes": "Partner channel referral",        "description": "Partner referral" },
+  { "accountNo": "ACCT-2007", "firstName": "Diana",   "lastName": "Ross",   "email": "diana.ross@yahoo.com",       "address": "700 VIP Lane, Miami, FL 33101",      "notes": "White-glove onboarding required", "description": "VIP onboarding" }
+]

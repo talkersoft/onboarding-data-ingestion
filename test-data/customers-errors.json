@@ -1,0 +1,6 @@
+[
+  { "accountNo": "ACCT-ERR-01", "firstName": "NoEmail",   "lastName": "User",    "email": "",                        "address": "1 Bad Data St",  "notes": "Missing email",        "description": "Should be rejected — empty email" },
+  { "accountNo": "ACCT-ERR-02", "firstName": "BadEmail",  "lastName": "Format",  "email": "not-a-valid-email",       "address": "2 Bad Data St",  "notes": "Invalid email format", "description": "Should be rejected — no @ sign" },
+  { "accountNo": "",            "firstName": "NoAccount",  "lastName": "Number",  "email": "noaccount@example.com",   "address": "3 Bad Data St",  "notes": "Missing accountNo",    "description": "Should be rejected — empty accountNo" },
+  { "accountNo": "ACCT-ERR-04", "firstName": "",           "lastName": "Blank",   "email": "nofirst@example.com",     "address": "4 Bad Data St",  "notes": "Missing firstName",    "description": "Should be rejected — empty firstName" }
+]

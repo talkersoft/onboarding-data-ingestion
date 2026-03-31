@@ -1,0 +1,124 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: onboarding-postgres
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: onboarding
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: onboarding-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: user
+      RABBITMQ_DEFAULT_PASS: password
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
+  init-db:
+    build: ./init-db
+    container_name: onboarding-init-db
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=user
+      - DB_PASSWORD=password
+      - DB_NAME=onboarding
+    depends_on:
+      - postgres
+    volumes:
+      - ./sql:/sql
+
+  seq:
+    image: datalust/seq
+    container_name: onboarding-seq
+    environment:
+      ACCEPT_EULA: "Y"
+      SEQ_FIRSTRUN_ADMINPASSWORD: ""
+      SEQ_FIRSTRUN_NOAUTHENTICATION: "true"
+    ports:
+      - "5380:80"
+      - "5341:5341"
+
+  onboarding-api:
+    build: ./onboarding-api
+    container_name: onboarding-api
+    environment:
+      - RABBITMQ_URL=amqp://user:password@rabbitmq:5672
+      - INGEST_DATA_DIR=/data/ingest
+      - SEQ_URL=http://seq:5341
+      - SERVICE_NAME=onboarding-api
+    depends_on:
+      - rabbitmq
+      - seq
+    ports:
+      - "3010:3000"
+    volumes:
+      - ingest_data:/data/ingest
+
+  ingestion-service:
+    build: ./ingestion-service
+    container_name: onboarding-ingestion-service
+    environment:
+      - RABBITMQ_URL=amqp://user:password@rabbitmq:5672
+      - INGEST_DATA_DIR=/data/ingest
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=user
+      - DB_PASSWORD=password
+      - DB_NAME=onboarding
+      - SEQ_URL=http://seq:5341
+      - SERVICE_NAME=ingestion-service
+    depends_on:
+      - postgres
+      - rabbitmq
+      - init-db
+      - seq
+    volumes:
+      - ingest_data:/data/ingest
+
+  query-service:
+    build: ./query-service
+    container_name: onboarding-query-service
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=user
+      - DB_PASSWORD=password
+      - DB_NAME=onboarding
+    depends_on:
+      - postgres
+      - init-db
+    ports:
+      - "3002:3002"
+
+  data-loader:
+    build: ./data-loader
+    container_name: onboarding-data-loader
+    environment:
+      - API_HOST=onboarding-api
+      - API_PORT=3000
+      - SEQ_URL=http://seq:5341
+      - SERVICE_NAME=data-loader
+      - DATA_DIR=/data
+      - PHASE_DELAY_MS=5000
+    depends_on:
+      - onboarding-api
+      - seq
+    volumes:
+      - ./test-data:/data
+
+volumes:
+  postgres_data:
+    driver: local
+    driver_opts:
+      type: none
+      device: ~/.docker/data/onboarding
+      o: bind
+  ingest_data:
