@@ -35,6 +35,11 @@ has(operation)
 accountNo = 'ACCT-2001'
 ```
 
+### By deterministicId (find all inserts + updates for the same account)
+```
+deterministicId = 'a1b2c3d4e5f67890'
+```
+
 ### Combining filters
 ```
 service = 'ingestion-service' and operation = 'UPDATED'

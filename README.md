@@ -26,6 +26,7 @@ After the demo, Seq opens at **http://localhost:5380**. Use the search bar to fi
 | Errors/warnings | `@Level = 'Warning' or @Level = 'Error'` |
 | By service | `service = 'onboarding-api'` |
 | By account | `accountNo = 'ACCT-2001'` |
+| All ops for an account | `deterministicId = '<hash>'` |
 
 See [logs.md](logs.md) for more examples.
 

@@ -1,8 +1,15 @@
 const amqp = require('amqplib');
+const crypto = require('crypto');
 const config = require('./config');
 const fileService = require('./services/fileService');
 const customerService = require('./services/customerService');
 const { log } = require('./logger');
+
+const HMAC_SECRET = process.env.HMAC_SECRET || 'onboarding-default-key';
+
+function deterministicId(accountNo) {
+  return crypto.createHmac('sha256', HMAC_SECRET).update(accountNo).digest('hex').slice(0, 16);
+}
 
 const RETRY_INTERVAL = 5000;
 const MAX_RETRIES = 10;
@@ -43,8 +50,10 @@ async function start(retries = 0) {
         });
 
         const { id, operation } = await customerService.upsert(correlationId, data);
+        const detId = deterministicId(data.accountNo);
         log('INFO', correlationId, `Customer ${operation} in database (id=${id})`, {
           operation,
+          deterministicId: detId,
           accountNo: data.accountNo,
           customerId: id,
         });

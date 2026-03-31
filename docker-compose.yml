@@ -75,6 +75,7 @@ services:
       - DB_NAME=onboarding
       - SEQ_URL=http://seq:5341
       - SERVICE_NAME=ingestion-service
+      - HMAC_SECRET=onboarding-secret-key
     depends_on:
       - postgres
       - rabbitmq
