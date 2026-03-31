@@ -25,11 +25,11 @@ All services run in Docker. One `docker compose up` brings up the entire stack.
                             onboarding-api         │  /data/ingest/  │
                             (port 3010)            │                 │
                          ┌────────────────────┐    │  <correlationId>│
-curl / test script ──▶   │ POST /onboarding    │──▶│  .json          │
+data-loader / curl ──▶   │ POST /onboarding    │──▶│  .json          │
                          │ • validate          │   └─────────────────┘
                          │ • write JSON file   │           │
                          │   to shared volume  │           │ ingestion-service reads
-                         │ • publish message   │           │ file, inserts into DB,
+                         │ • publish message   │           │ file, upserts into DB,
                          │   to RabbitMQ       │           │ deletes file
                          │ • return 202        │           ▼
                          └────────┬───────────┘   ┌──────────────────────┐
@@ -37,7 +37,7 @@ curl / test script ──▶   │ POST /onboarding    │──▶│  .json   
                                   │  publish      │  (RabbitMQ consumer)  │
                                   ▼               │  • consume message    │
                          ┌────────────────────┐   │  • read JSON file    │
-                         │    RabbitMQ         │──▶│  • INSERT into PG    │
+                         │    RabbitMQ         │──▶│  • UPSERT into PG    │
                          │    (port 5672)      │   │  • delete JSON file  │
                          │    UI: 15672        │   └──────────┬───────────┘
                          └────────────────────┘              │
@@ -68,15 +68,16 @@ curl / run-queries.sh──▶ │  (port 3002)        │───────�
 | `seq`                | 5380 / 5341 | Structured log aggregator (UI on 5380, ingestion API on 5341) |
 | `init-db`            | —     | Runs once: creates schema + inserts seed data, then exits           |
 | `onboarding-api`     | 3010  | Receives form data, writes file to volume, publishes to RabbitMQ    |
-| `ingestion-service`  | —     | Consumes from RabbitMQ, reads file, inserts into DB, deletes file   |
+| `ingestion-service`  | —     | Consumes from RabbitMQ, reads file, upserts into DB, deletes file   |
 | `query-service`      | 3002  | Exposes SQL queries Q1–Q5 as HTTP endpoints                        |
+| `data-loader`        | —     | Posts test data in 3 phases (new, changed, bad), then exits         |
 
 ### Shared Volume (Fake S3)
 
 A Docker named volume (`ingest-data`) is mounted into both `onboarding-api` and `ingestion-service` at `/data/ingest/`. This simulates an S3 bucket:
 
 - **onboarding-api** writes a JSON file named `<correlationId>.json` containing the customer data.
-- **ingestion-service** reads that file, inserts the data into Postgres, then deletes the file.
+- **ingestion-service** reads that file, upserts the data into Postgres, then deletes the file.
 
 The file's lifecycle mirrors the real pattern: data lands in object storage, a consumer processes it, then it's cleaned up.
 
@@ -87,23 +88,24 @@ The file's lifecycle mirrors the real pattern: data lands in object storage, a c
 ```
 onboarding-data-ingestion/
 ├── docker-compose.yml
-├── package.json                # npm test → node scripts/test.js, npm run demo → ./demo.sh
+├── package.json
 ├── demo.sh                     # One command: tear down → rebuild → load data → query
-├── test.sh                     # One command: tear down → rebuild → run 25 assertions (calls npm test)
+├── README.md
+├── logs.md                     # Seq search syntax reference
 ├── requirements.md
 ├── implementation.md
+├── architecture.md
+├── .gitignore
 ├── scripts/
-│   ├── test.js                 # Node.js integration test suite (25 assertions)
-│   ├── app-run.sh              # Build + start all containers
-│   ├── app-tear-down.sh        # Stop containers + destroy all data
 │   ├── wait-for-services.sh    # Poll until all services are healthy
-│   ├── load-test-data.sh       # POST test data through the full pipeline
 │   └── run-queries.sh          # Hit query-service endpoints for Q1–Q5
 ├── test-data/
-│   └── customers.json          # Hardcoded test customer payloads
+│   ├── customers.json          # Phase 1: new customers
+│   ├── customers-updates.json  # Phase 2: changed customers (same accountNo, different data)
+│   └── customers-errors.json   # Phase 3: intentionally bad data (validation failures)
 ├── sql/
 │   ├── init.sql                # Schema + seed data (run by init-db container)
-│   └── queries.sql             # Raw SQL for reference (Q1–Q5)
+│   └── reference-queries.sql   # Raw SQL for reference (Q1–Q5, not used at runtime)
 ├── init-db/
 │   ├── Dockerfile
 │   ├── package.json
@@ -135,20 +137,26 @@ onboarding-data-ingestion/
 │       ├── config.js           # Environment-based configuration
 │       ├── logger.js           # Structured logger (console + Seq)
 │       ├── db.js               # Postgres connection pool
-│       ├── consumer.js         # RabbitMQ consumer logic
+│       ├── consumer.js         # RabbitMQ consumer logic + deterministicId generation
 │       └── services/
 │           ├── fileService.js      # Reads + deletes JSON from shared volume
 │           └── customerService.js  # UPSERT into customers table
-└── query-service/
+├── query-service/
+│   ├── Dockerfile
+│   ├── package.json
+│   └── src/
+│       ├── server.js           # Entry point (port 3002)
+│       ├── app.js              # Express app setup
+│       ├── config.js
+│       ├── db.js               # Postgres connection pool
+│       └── routes/
+│           └── queries.js      # GET /queries/:id (q1–q5)
+└── data-loader/
     ├── Dockerfile
     ├── package.json
     └── src/
-        ├── server.js           # Entry point (port 3002)
-        ├── app.js              # Express app setup
-        ├── config.js
-        ├── db.js               # Postgres connection pool
-        └── routes/
-            └── queries.js      # GET /queries/:id (q1–q5)
+        ├── loader.js           # Posts test data in 3 phases
+        └── logger.js           # Structured logger (console + Seq)
 ```
 
 ---
@@ -157,35 +165,42 @@ onboarding-data-ingestion/
 
 Every incoming request gets a unique `correlationId` (UUID v4). This ID flows through every stage:
 
-1. **Generated** in `onboarding-api` middleware, set on `req.correlationId`.
+1. **Generated** by the `data-loader` (or any client), sent via `x-correlation-id` header.
 2. **Used as the filename** for the JSON file written to the shared volume (`<correlationId>.json`).
 3. **Included in the RabbitMQ message** payload so the consumer knows which file to read and can log with the same ID.
-4. **Logged by ingestion-service** when consuming, reading the file, inserting into DB, and deleting the file.
+4. **Logged by every service** at every step — the same correlationId appears across `data-loader`, `onboarding-api`, and `ingestion-service` logs.
 5. **Returned to the caller** in the response `x-correlation-id` header.
 
-The same correlationId appears in `onboarding-api` logs, RabbitMQ message payload, and `ingestion-service` logs — full end-to-end tracing.
+### deterministicId (HMAC)
+
+In addition to the per-request `correlationId`, the `ingestion-service` generates a `deterministicId` using `HMAC_SHA256(secret_key, accountNo)`. This produces the same hash for the same account number, regardless of when the request was made. Search by `deterministicId` in Seq to see every INSERT and UPDATE operation for a given account.
 
 ---
 
 ## Structured Log Aggregation (Seq)
 
-Both `onboarding-api` and `ingestion-service` ship structured logs to **Seq** — a purpose-built log aggregator.
+All Node.js services ship structured logs to **Seq** — a purpose-built log aggregator.
 
 ### How it works
 
 Each service has a `logger.js` module that:
-1. Outputs JSON to `stdout` (visible in `docker compose logs` as before).
+1. Outputs JSON to `stdout` (visible in `docker compose logs`).
 2. POSTs the same event to Seq's ingestion endpoint (`http://seq:5341/api/events/raw?clef`) in CLEF format (fire-and-forget).
 
 Seq indexes every JSON property as a searchable field. No schema definition needed.
 
-### Viewing correlated logs
+### Searchable properties
 
-Open **http://localhost:5380** in a browser. You can:
-- See all logs from both services in a unified timeline.
-- Click a `correlationId` value to filter — shows every log entry for that single request across `onboarding-api` and `ingestion-service`.
-- Filter by `service` to see only one service's logs.
-- Filter by level (`Warning`, `Error`) to find problems.
+| Property | Example | Purpose |
+|---|---|---|
+| `correlationId` | `correlationId = 'a1b2...'` | Trace one request across all services |
+| `operation` | `operation = 'INSERTED'` | Find database inserts vs updates |
+| `deterministicId` | `deterministicId = 'abc123...'` | Find all ops for one account |
+| `service` | `service = 'ingestion-service'` | Filter by service |
+| `accountNo` | `accountNo = 'ACCT-2001'` | Filter by account |
+| `@Level` | `@Level = 'Warning'` | Find errors and warnings |
+
+See [logs.md](logs.md) for more search examples.
 
 ### CLEF mapping
 
@@ -195,7 +210,7 @@ Open **http://localhost:5380** in a browser. You can:
 | `level` (INFO/WARN/ERROR) | `@l` (Information/Warning/Error) | Level badge |
 | `message` | `@mt` | Message template |
 | `correlationId` | `correlationId` | Indexed property |
-| `service` | `service` | Indexed property (onboarding-api / ingestion-service) |
+| `service` | `service` | Indexed property |
 | Any context fields | Spread into event | Indexed properties |
 
 ---
@@ -214,6 +229,7 @@ Receives form data, persists it as a file, and signals the ingestion service via
 | `RABBITMQ_URL`    | `amqp://user:password@rabbitmq:5672` | RabbitMQ connection        |
 | `INGEST_DATA_DIR` | `/data/ingest`               | Shared volume mount path         |
 | `EXCHANGE_NAME`   | `onboarding_exchange`        | RabbitMQ exchange name           |
+| `QUEUE_NAME`      | `onboarding_queue`           | RabbitMQ queue name              |
 | `ROUTING_KEY`     | `customer.onboarded`         | RabbitMQ routing key             |
 
 #### `src/middleware/correlationId.js`
@@ -238,25 +254,18 @@ Receives form data, persists it as a file, and signals the ingestion service via
 
 Handler for `POST /onboarding`:
 
-1. Log "request received" with correlationId and payload.
-2. Validate the request body. If invalid, return `400`.
-3. Call `fileService.write()` — writes `{ accountNo, firstName, lastName, email, description }` to `/data/ingest/<correlationId>.json`.
-4. Call `messageService.publish()` — publishes `{ correlationId, fileName }` to RabbitMQ.
-5. Return `202 Accepted` with `{ correlationId, status: "accepted" }`.
+1. Validate the request body. If invalid, return `400` with errors.
+2. Call `fileService.write()` — writes `{ accountNo, firstName, lastName, email, address, notes, description }` to `/data/ingest/<correlationId>.json`.
+3. Call `messageService.publish()` — publishes `{ correlationId, fileName }` to RabbitMQ.
+4. Return `202 Accepted` with `{ correlationId, status: "accepted" }`.
 
-Returns `202` (not `200`) because processing is now **asynchronous** — the data has been accepted and queued, not yet persisted to the database.
-
-#### `src/services/fileService.js`
-
-- `write(correlationId, data)` — writes JSON to `/data/ingest/<correlationId>.json`.
-- Logs file path on success.
+Returns `202` (not `200`) because processing is **asynchronous** — the data has been accepted and queued, not yet persisted to the database.
 
 #### `src/services/messageService.js`
 
 - Connects to RabbitMQ on startup (with retry).
+- Asserts both the exchange and queue on connect (ensures no messages are lost if ingestion-service connects later).
 - `publish(correlationId, fileName)` — publishes to `onboarding_exchange` with routing key `customer.onboarded`.
-- Message payload: `{ correlationId, fileName }`.
-- Logs publish confirmation.
 
 ---
 
@@ -278,6 +287,7 @@ No HTTP server. Runs as a background worker consuming from RabbitMQ.
 | `DB_NAME`         | `onboarding`                 | Database name                 |
 | `DB_USER`         | `user`                       | Database user                 |
 | `DB_PASSWORD`     | `password`                   | Database password             |
+| `HMAC_SECRET`     | `onboarding-default-key`     | Secret key for deterministicId |
 
 #### `src/consumer.js`
 
@@ -286,24 +296,15 @@ No HTTP server. Runs as a background worker consuming from RabbitMQ.
 3. Asserts queue (`onboarding_queue`), binds to exchange with routing key `customer.onboarded`.
 4. On message received:
    a. Parse message → extract `correlationId`, `fileName`.
-   b. Log "message received" with correlationId.
-   c. Call `fileService.read(fileName)` — read JSON from shared volume.
-   d. Log "file read" with correlationId.
-   e. Call `customerService.upsert(correlationId, data)` — UPSERT into `customers` table.
-   f. Log "customer upserted (id=...)" with correlationId.
-   g. Call `fileService.delete(fileName)` — remove the JSON file.
-   h. Log "file deleted" with correlationId.
-   i. Acknowledge the message (`channel.ack`).
-5. On error: log with correlationId, nack (requeue or dead-letter depending on error type).
-
-#### `src/services/fileService.js`
-
-- `read(fileName)` — reads and parses JSON from `/data/ingest/<fileName>`.
-- `delete(fileName)` — deletes the file after successful processing.
+   b. Read JSON file from shared volume.
+   c. UPSERT into `customers` table. Detects INSERT vs UPDATE via PostgreSQL `xmax` column.
+   d. Generate `deterministicId` via `HMAC_SHA256(HMAC_SECRET, accountNo)`.
+   e. Log operation with `correlationId`, `operation` (INSERTED/UPDATED), `deterministicId`, and `accountNo`.
+   f. Delete the JSON file, acknowledge the message.
 
 #### `src/services/customerService.js`
 
-- `upsert(correlationId, data)` — `INSERT INTO customers (correlation_id, account_no, first_name, last_name, email, description) ... ON CONFLICT (account_no) DO UPDATE SET ... RETURNING id`. Idempotent — posting the same `accountNo` twice updates the existing row instead of creating a duplicate.
+- `upsert(correlationId, data)` — `INSERT INTO customers (...) ON CONFLICT (account_no) DO UPDATE SET ... RETURNING id, xmax`. Returns `{ id, operation }` where operation is `INSERTED` or `UPDATED`.
 
 ---
 
@@ -321,107 +322,33 @@ Read-only HTTP service. Runs the five required SQL queries and returns results a
 | `GET /queries/q4` | Q4    | Duplicate email addresses                |
 | `GET /queries/q5` | Q5    | Customers whose first name starts with "A" |
 
-Each endpoint executes the corresponding SQL query from `sql/queries.sql`, returns the result set as JSON, and logs the query execution with timing.
+---
+
+### `data-loader` (test data client)
+
+A Node.js Docker service that loads test data through the pipeline in three phases:
+
+1. **new-customers** — posts `customers.json` (new records, all should be INSERTED)
+2. **changed-customers** — posts `customers-updates.json` (existing accountNos with modified data, should be UPDATED)
+3. **bad-data** — posts `customers-errors.json` (missing/invalid fields, should be rejected with 400)
+
+Generates a unique `correlationId` for each customer POST and sends structured logs to Seq for the per-request events. Phase-level bookmarks are console-only (not sent to Seq).
 
 ---
 
 ### `init-db` (Database Initializer)
 
-Borrowed from the DTS pattern. Runs once at startup, then exits.
-
-#### `src/init-db.js`
+Runs once at startup, then exits.
 
 - Connects to Postgres with retry logic (5s intervals, max 10 retries).
 - Reads and executes `sql/init.sql`.
-- Logs success or failure.
 - Exits after completion.
-
----
-
-## Docker Compose
-
-```yaml
-services:
-  postgres:
-    image: postgres:16
-    ...
-
-  rabbitmq:
-    image: rabbitmq:3-management
-    ...
-
-  seq:
-    image: datalust/seq
-    container_name: onboarding-seq
-    environment:
-      ACCEPT_EULA: "Y"
-      SEQ_FIRSTRUN_NOAUTHENTICATION: "true"
-    ports:
-      - "5380:80"       # Seq web UI
-      - "5341:5341"     # CLEF ingestion API
-
-  init-db:
-    build: ./init-db
-    ...
-
-  onboarding-api:
-    build: ./onboarding-api
-    environment:
-      - ...
-      - SEQ_URL=http://seq:5341
-      - SERVICE_NAME=onboarding-api
-    depends_on:
-      - rabbitmq
-      - seq
-    ...
-
-  ingestion-service:
-    build: ./ingestion-service
-    environment:
-      - ...
-      - SEQ_URL=http://seq:5341
-      - SERVICE_NAME=ingestion-service
-    depends_on:
-      - postgres
-      - rabbitmq
-      - init-db
-      - seq
-    ...
-
-  query-service:
-    build: ./query-service
-    container_name: onboarding-query-service
-    environment:
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_USER=user
-      - DB_PASSWORD=password
-      - DB_NAME=onboarding
-    depends_on:
-      - postgres
-      - init-db
-    ports:
-      - "3002:3002"
-
-volumes:
-  postgres_data:
-    driver: local
-    driver_opts:
-      type: none
-      device: ~/.docker/data/onboarding
-      o: bind
-  ingest_data:
-```
-
-Two volumes:
-- **`postgres_data`** — bind mount to `~/.docker/data/onboarding` for easy teardown.
-- **`ingest_data`** — shared between `onboarding-api` and `ingestion-service` (the fake S3 bucket). Ephemeral — files are deleted after processing.
 
 ---
 
 ## Database
 
-### Schema & Seed Data (`sql/init.sql`)
+### Schema (`sql/init.sql`)
 
 ```sql
 CREATE TABLE IF NOT EXISTS customers (
@@ -431,26 +358,22 @@ CREATE TABLE IF NOT EXISTS customers (
     first_name      VARCHAR(100) NOT NULL,
     last_name       VARCHAR(100) NOT NULL,
     email           VARCHAR(255) NOT NULL,
+    address         TEXT,
+    notes           TEXT,
     description     TEXT,
     created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 ```
 
-- **`account_no`** — the business key. The `UNIQUE` constraint enables `ON CONFLICT (account_no) DO UPDATE` upserts. Posting the same account number twice updates the existing row (name, email, description) instead of creating a duplicate.
-- **`correlation_id`** — traceability only. Links each row to the request/log trail that last created or updated it.
-- **`description`** — optional free-text field for account notes.
+- **`account_no`** — the business key. The `UNIQUE` constraint enables `ON CONFLICT (account_no) DO UPDATE` upserts.
+- **`correlation_id`** — traceability only. Links each row to the request that last created or updated it.
+- **`address`**, **`notes`**, **`description`** — optional text fields.
 
-Seed data: ~20 rows with explicit `created_at` values designed to exercise all five queries:
-
-- Dates spanning Jan 2025 – Dec 2025 (Q3: monthly counts)
-- Mix of `@gmail.com`, `@yahoo.com`, `@company.com` domains (Q2: gmail filter)
-- Duplicate emails (Q4: duplicates)
-- First names starting with "A": Alice, Andrew, Amanda, etc. (Q5: starts with A)
-- Recent dates for Q1 (10 most recent)
+Seed data: 20 rows with explicit `created_at` values spanning Jan–Dec 2025, designed to exercise all five queries.
 
 ---
 
-## SQL Queries (`sql/queries.sql`)
+## SQL Queries (`sql/reference-queries.sql`)
 
 | # | Description | Key SQL |
 |---|-------------|---------|
@@ -460,143 +383,23 @@ Seed data: ~20 rows with explicit `created_at` values designed to exercise all f
 | Q4 | Duplicate email addresses | `GROUP BY email HAVING COUNT(*) > 1` |
 | Q5 | Customers whose first name starts with "A" | `WHERE first_name LIKE 'A%'` |
 
+The `.sql` file is for reference only. The actual queries are hardcoded in `query-service/src/routes/queries.js`.
+
 ---
 
 ## Test Data
 
 ### `test-data/customers.json`
 
-Hardcoded array of customer objects to POST through the full pipeline:
+8 customer records posted in phase 1 (new-customers). Includes one intentional duplicate `accountNo` to test upsert within the same phase.
 
-```json
-[
-  { "accountNo": "ACCT-2001", "firstName": "John",  "lastName": "Doe",   "email": "john.doe@example.com",  "description": "New customer signup" },
-  { "accountNo": "ACCT-2002", "firstName": "Alice", "lastName": "Smith", "email": "alice.smith@gmail.com", "description": "Referred by Bob" },
-  ...
-  { "accountNo": "ACCT-2002", "firstName": "Alice", "lastName": "Smith", "email": "alice.smith@gmail.com", "description": "Updated — now premium member" },
-  ...
-]
-```
+### `test-data/customers-updates.json`
 
-Separate from seed data. Seed data proves SQL queries work on startup. Test data proves the live pipeline works end-to-end (API → file → RabbitMQ → consumer → DB). Note that `ACCT-2002` appears twice — the second POST upserts the row, updating the description from "Referred by Bob" to "Updated — now premium member".
+3 customer records posted in phase 2 (changed-customers). Same `accountNo`s as phase 1 but with modified email, address, notes, and description to demonstrate the UPDATE path.
 
-### `scripts/load-test-data.sh`
+### `test-data/customers-errors.json`
 
-Reads `test-data/customers.json`, loops through each entry, and POSTs to `http://localhost:3010/onboarding`. Logs each response (including correlationId). Demonstrates the full async pipeline in action.
-
----
-
-## Scripts
-
-### Root-Level Scripts
-
-Both live at the repo root. Both are self-contained — they tear down, rebuild, and start from scratch. No assumptions about prior state.
-
-#### `demo.sh` — Full end-to-end demo
-
-Tears down any previous run, rebuilds all images, starts the stack, waits for healthy, loads test data through the pipeline, waits for async processing, then runs all five SQL queries and prints results.
-
-```bash
-./demo.sh
-```
-
-#### `test.sh` — Automated integration tests
-
-Tears down, rebuilds, starts the stack, waits for healthy, then runs 25 assertions covering validation, submission, correlation ID pass-through, upsert idempotency, seed data, and all query endpoints. Calls `npm test` which runs `node scripts/test.js`.
-
-```bash
-./test.sh       # or: npm test
-```
-
-#### `scripts/test.js` — Node.js test runner
-
-The actual test logic. 25 assertions in 7 groups:
-
-| Group | Assertions | What it proves |
-|---|---|---|
-| Health Checks | 2 | Both services respond |
-| Validation | 6 | Bad input → 400 with correct error messages (incl. accountNo) |
-| Successful Submission | 3 | Valid payload → 202 with correlationId |
-| Correlation ID Pass-Through | 2 | Custom `x-correlation-id` header echoed back |
-| Upsert on accountNo | 7 | Same accountNo twice → 1 row; name, email, and description all updated |
-| Seed Data | 1 | Seed rows present in database |
-| Query Endpoints | 8 | Q1–Q5 return 200, invalid → 404, results are correct |
-
-### `scripts/` — Individual Building Blocks
-
-#### `scripts/app-run.sh`
-
-```bash
-#!/bin/bash
-mkdir -p ~/.docker/data/onboarding
-docker compose build
-docker compose up
-```
-
-#### `scripts/app-tear-down.sh`
-
-```bash
-#!/bin/bash
-echo "WARNING: This will stop all containers and destroy the database."
-read -p "Are you sure? Type 'yes' to continue: " confirm
-case "$confirm" in
-    [yY][eE][sS] | [yY])
-        docker compose down -v
-        rm -rf ~/.docker/data/onboarding
-        echo "Done. All data destroyed."
-        ;;
-    *)
-        echo "Aborted."
-        exit 1
-        ;;
-esac
-```
-
-#### `scripts/wait-for-services.sh`
-
-Polls health endpoints until all services are up (onboarding-api on 3010, query-service on 3002). Times out after 60 seconds. Used by `demo.sh` and `test.js` to avoid acting before services are ready.
-
-#### `scripts/load-test-data.sh`
-
-Posts every entry from `test-data/customers.json` through the API. Logs each response (including correlationId).
-
-#### `scripts/run-queries.sh`
-
-Hits each query-service endpoint and prints the results:
-
-```bash
-#!/bin/bash
-for q in q1 q2 q3 q4 q5; do
-  echo "=== $q ==="
-  curl -s http://localhost:3002/queries/$q | jq .
-  echo ""
-done
-```
-
----
-
-## Log Format
-
-All log output is structured JSON. Each entry contains `timestamp`, `level`, `service`, `correlationId`, and `message`, plus any additional context fields.
-
-**Console output** (via `docker compose logs`):
-```json
-{"timestamp":"2025-06-15T10:30:00.000Z","level":"INFO","service":"onboarding-api","correlationId":"a1b2c3d4-...","message":"Incoming request: POST /onboarding","body":{...}}
-{"timestamp":"2025-06-15T10:30:00.001Z","level":"INFO","service":"onboarding-api","correlationId":"a1b2c3d4-...","message":"Validation passed"}
-{"timestamp":"2025-06-15T10:30:00.003Z","level":"INFO","service":"onboarding-api","correlationId":"a1b2c3d4-...","message":"File written: /data/ingest/a1b2c3d4-....json"}
-{"timestamp":"2025-06-15T10:30:00.008Z","level":"INFO","service":"onboarding-api","correlationId":"a1b2c3d4-...","message":"Message published to onboarding_exchange"}
-{"timestamp":"2025-06-15T10:30:00.009Z","level":"INFO","service":"onboarding-api","correlationId":"a1b2c3d4-...","message":"Response sent: 202 (9ms)","statusCode":202,"durationMs":9}
-```
-
-```json
-{"timestamp":"2025-06-15T10:30:00.050Z","level":"INFO","service":"ingestion-service","correlationId":"a1b2c3d4-...","message":"Message received from onboarding_queue"}
-{"timestamp":"2025-06-15T10:30:00.052Z","level":"INFO","service":"ingestion-service","correlationId":"a1b2c3d4-...","message":"File read: /data/ingest/a1b2c3d4-....json"}
-{"timestamp":"2025-06-15T10:30:00.058Z","level":"INFO","service":"ingestion-service","correlationId":"a1b2c3d4-...","message":"Customer upserted into database (id=21)"}
-{"timestamp":"2025-06-15T10:30:00.059Z","level":"INFO","service":"ingestion-service","correlationId":"a1b2c3d4-...","message":"File deleted: /data/ingest/a1b2c3d4-....json"}
-{"timestamp":"2025-06-15T10:30:00.060Z","level":"INFO","service":"ingestion-service","correlationId":"a1b2c3d4-...","message":"Message acknowledged"}
-```
-
-**Seq** (at http://localhost:5380) receives the same events and indexes every field. Click any `correlationId` to see the full request lifecycle across both services in one view.
+4 intentionally invalid records posted in phase 3 (bad-data). Tests missing email, invalid email format, missing accountNo, and missing firstName. All should return 400 with validation errors logged as warnings.
 
 ---
 
@@ -606,48 +409,25 @@ All log output is structured JSON. Each entry contains `timestamp`, `level`, `se
 |------------------------------------|--------------------|--------------------------------------------------------------|
 | Missing/invalid fields             | onboarding-api     | Return `400`, log warning with correlationId                 |
 | File write failure                 | onboarding-api     | Return `500`, log error with correlationId                   |
-| RabbitMQ publish failure           | onboarding-api     | Return `500`, log error with correlationId (file already written — orphan) |
-| File not found on consume          | ingestion-service  | Log error, nack message (dead-letter)                        |
-| DB insert failure on consume       | ingestion-service  | Log error, nack with requeue (transient) or dead-letter (permanent) |
-| File delete failure after insert   | ingestion-service  | Log warning (non-fatal — data is in DB, file is stale)       |
-| Unexpected error                   | any service        | Log full error with correlationId                            |
+| RabbitMQ publish failure           | onboarding-api     | Return `500`, log error with correlationId                   |
+| File not found on consume          | ingestion-service  | Log error, nack message                                      |
+| DB upsert failure on consume       | ingestion-service  | Log error, nack message                                      |
+| File delete failure after upsert   | ingestion-service  | Log warning (non-fatal — data is in DB)                      |
 
 ---
 
 ## How to Run
 
-### Full Demo
-
 ```bash
 ./demo.sh
 ```
 
-Tears down, rebuilds, loads test data, runs queries, prints results. One command.
-
-### Automated Tests
-
-```bash
-./test.sh       # or: npm test
-```
-
-Tears down, rebuilds, runs 29 assertions, prints pass/fail. One command.
-
-### Manual Step-by-Step
-
-```bash
-./scripts/app-run.sh                    # terminal 1: build + start (foreground)
-./scripts/load-test-data.sh             # terminal 2: post test data
-sleep 3                                 # wait for async processing
-./scripts/run-queries.sh                # terminal 2: prove data arrived
-open http://localhost:5380              # Seq log viewer (correlated structured logs)
-open http://localhost:15672             # RabbitMQ UI (user/password)
-docker compose logs onboarding-api onboarding-ingestion-service   # raw console logs
-```
+Tears down, rebuilds, loads test data (3 phases), runs all SQL queries, prints results. One command. See [README.md](README.md).
 
 ### Tear Down
 
 ```bash
-./scripts/app-tear-down.sh              # interactive confirm, nukes everything
+docker compose down -v
 ```
 
 ---
@@ -656,7 +436,7 @@ docker compose logs onboarding-api onboarding-ingestion-service   # raw console 
 
 - Authentication / authorization
 - Database migrations tooling (using raw init script for simplicity)
-- Dead-letter queue retry logic (DLQ exists but no automated retry)
+- Dead-letter queue retry logic
 - Rate limiting
-- Unit tests (integration tests exist; unit tests per service are a natural next step)
+- Unit tests
 - Frontend

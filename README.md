@@ -12,11 +12,11 @@ A distributed Node.js system that receives customer onboarding data, queues it v
 ./demo.sh
 ```
 
-This tears down any previous run, builds all services, loads test data (inserts, updates, and intentional validation errors), runs SQL queries, and opens the Seq log viewer in your browser.
+This tears down any previous run, builds all services, loads test data (inserts, updates, and intentional validation errors), and runs SQL queries.
 
 ## Searching Logs
 
-After the demo, Seq opens at **http://localhost:5380**. Use the search bar to filter:
+After the demo, open **http://localhost:5380** in your browser. Use the search bar to filter:
 
 | Find | Search |
 |---|---|

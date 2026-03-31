@@ -7,10 +7,10 @@
                           │                          Seq (Log Aggregator)                         │
                           │                        http://localhost:5380                          │
                           │                                                                       │
-                          │   All structured logs (JSON/CLEF) from onboarding-api and             │
-                          │   ingestion-service are shipped here. Every log entry has             │
-                          │   a correlationId — click one to see the full request trace           │
-                          │   across both services.                                               │
+│   All structured logs (JSON/CLEF) from data-loader,                   │
+│   onboarding-api, and ingestion-service are shipped here.             │
+│   Every log entry has a correlationId — click one to see              │
+│   the full request trace across all services.                         │
                           │                                                                       │
                           └──────────────────────────────▲──────────────────▲─────────────────────┘
                                                          │                  │
@@ -20,8 +20,8 @@
 ┌────────────────┐                        ┌──────────────┴──────────┐      ┌─┴────────────────────────────┐
 │                │    POST /onboarding     │                        │      │                              │
 │                │───────────────────────▶ │    onboarding-api      │      │     ingestion-service        │
-│    Client      │                         │    (port 3010)         │      │     (RabbitMQ consumer)      │
-│    (curl)      │ ◀─────────────────────  │                        │      │                              │
+│ (data-loader   │                         │    (port 3010)         │      │     (RabbitMQ consumer)      │
+│  or curl)      │ ◀─────────────────────  │                        │      │                              │
 │                │    202 Accepted         │    1. Validate         │      │     5. Consume message       │
 │                │    + correlationId      │    2. Write file ──────┼──┐   │     6. Read file ───────┐    │
 └────────────────┘                         │    3. Publish msg ─────┼──┼─┐ │     7. Upsert to DB     │    │
@@ -56,7 +56,9 @@
                                            │                        │   │   │  first_name        │     │  │
                                            │   UI: localhost:15672  │   │   │  last_name         │  UNIQUE│
                                            │                        │   │   │  email             │  (upsert
-                                           └────────────────────────┘   │   │  description       │   key)
+                                           └────────────────────────┘   │   │  address           │   key)
+                                                                        │   │  notes             │     │
+                                                                        │   │  description       │     │
                                                                         │   │  created_at        │     │
                                                                         │   └────────────────────┘     │
                                                                         │                              │
@@ -91,6 +93,7 @@ Client                  onboarding-api           Volume (S3)         RabbitMQ   
   │  POST /onboarding        │                      │                   │                      │                     │
   │  {accountNo, firstName,  │                      │                   │                      │                     │
   │   lastName, email,       │                      │                   │                      │                     │
+  │   address, notes,        │                      │                   │                      │                     │
   │   description}           │                      │                   │                      │                     │
   │─────────────────────────▶│                      │                   │                      │                     │
   │                          │                      │                   │                      │                     │
@@ -170,7 +173,7 @@ correlationId = "a1b2c3d4-..."
 │                                                                                           │
 │   Message received from onboarding_queue                                                  │
 │   File read: a1b2c3d4-....json              { accountNo: "ACCT-2001", ... }               │
-│   Customer INSERTED into database (id=21)   { operation: "INSERTED" }                     │
+│   Customer INSERTED in database (id=21)     { operation: "INSERTED", deterministicId: ... }│
 │   File deleted: a1b2c3d4-....json                                                         │
 │   Message acknowledged                                                                    │
 │                                                                                           │
@@ -190,3 +193,4 @@ All visible in Seq at http://localhost:5380 — filter by correlationId.
 | onboarding-api | custom (Node.js) | 3010 | HTTP API → file + message |
 | ingestion-service | custom (Node.js) | — | Consumer → DB writer |
 | query-service | custom (Node.js) | 3002 | SQL query API |
+| data-loader | custom (Node.js) | — | Test data client (3 phases, then exits) |
