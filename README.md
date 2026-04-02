@@ -14,6 +14,12 @@ A distributed Node.js system that receives customer onboarding data, queues it v
 
 This tears down any previous run, builds all services, loads test data (inserts, updates, and intentional validation errors), and runs SQL queries.
 
+## Swagger UI
+
+After the demo, run the SQL queries interactively from the browser:
+
+**[http://localhost:3002/api-docs](http://localhost:3002/api-docs)**
+
 ## Searching Logs
 
 After the demo, open **http://localhost:5380** in your browser. Use the search bar to filter:

@@ -55,7 +55,7 @@ data-loader / curl ──▶   │ POST /onboarding    │──▶│  .json   
                          │  query-service       │          │
 curl / run-queries.sh──▶ │  (port 3002)        │──────────┘
                          │  GET /queries/:id   │   reads from Postgres
-                         │  (q1, q2, q3, q4, q5)
+                         │  (5 named queries)
                          └────────────────────┘
 ```
 
@@ -69,7 +69,7 @@ curl / run-queries.sh──▶ │  (port 3002)        │───────�
 | `init-db`            | —     | Runs once: creates schema + inserts seed data, then exits           |
 | `onboarding-api`     | 3010  | Receives form data, writes file to volume, publishes to RabbitMQ    |
 | `ingestion-service`  | —     | Consumes from RabbitMQ, reads file, upserts into DB, deletes file   |
-| `query-service`      | 3002  | Exposes SQL queries Q1–Q5 as HTTP endpoints                        |
+| `query-service`      | 3002  | Exposes SQL queries as HTTP endpoints. Swagger at `/api-docs`.       |
 | `data-loader`        | —     | Posts test data in 3 phases (new, changed, bad), then exits         |
 
 ### Shared Volume (Fake S3)
@@ -98,14 +98,14 @@ onboarding-data-ingestion/
 ├── .gitignore
 ├── scripts/
 │   ├── wait-for-services.sh    # Poll until all services are healthy
-│   └── run-queries.sh          # Hit query-service endpoints for Q1–Q5
+│   └── run-queries.sh          # Hit query-service endpoints
 ├── test-data/
 │   ├── customers.json          # Phase 1: new customers
 │   ├── customers-updates.json  # Phase 2: changed customers (same accountNo, different data)
 │   └── customers-errors.json   # Phase 3: intentionally bad data (validation failures)
 ├── sql/
 │   ├── init.sql                # Schema + seed data (run by init-db container)
-│   └── reference-queries.sql   # Raw SQL for reference (Q1–Q5, not used at runtime)
+│   └── reference-queries.sql   # Raw SQL for reference (not used at runtime)
 ├── init-db/
 │   ├── Dockerfile
 │   ├── package.json
@@ -150,7 +150,7 @@ onboarding-data-ingestion/
 │       ├── config.js
 │       ├── db.js               # Postgres connection pool
 │       └── routes/
-│           └── queries.js      # GET /queries/:id (q1–q5)
+│           └── queries.js      # GET /queries/:id
 └── data-loader/
     ├── Dockerfile
     ├── package.json
@@ -314,13 +314,13 @@ Read-only HTTP service. Runs the five required SQL queries and returns results a
 
 #### `src/routes/queries.js`
 
-| Endpoint          | Query | Description                              |
-|-------------------|-------|------------------------------------------|
-| `GET /queries/q1` | Q1    | 10 most recently onboarded customers     |
-| `GET /queries/q2` | Q2    | Customers with `@gmail.com` emails       |
-| `GET /queries/q3` | Q3    | Customer count per month in 2025         |
-| `GET /queries/q4` | Q4    | Duplicate email addresses                |
-| `GET /queries/q5` | Q5    | Customers whose first name starts with "A" |
+| Endpoint | Description |
+|---|---|
+| `GET /queries/10-most-recent` | 10 most recently onboarded customers |
+| `GET /queries/customers-with-gmail` | Customers with `@gmail.com` emails |
+| `GET /queries/customers-per-month` | Customer count per month in 2025 |
+| `GET /queries/duplicate-emails` | Duplicate email addresses |
+| `GET /queries/names-starting-with-a` | Customers whose first name starts with "A" |
 
 ---
 
@@ -375,13 +375,13 @@ Seed data: 20 rows with explicit `created_at` values spanning Jan–Dec 2025, de
 
 ## SQL Queries (`sql/reference-queries.sql`)
 
-| # | Description | Key SQL |
-|---|-------------|---------|
-| Q1 | 10 most recently onboarded customers | `ORDER BY created_at DESC LIMIT 10` |
-| Q2 | Customers with `@gmail.com` emails | `WHERE email LIKE '%@gmail.com'` |
-| Q3 | Customer count per month in 2025 | `DATE_TRUNC('month', created_at)` + `GROUP BY`, filtered to 2025 |
-| Q4 | Duplicate email addresses | `GROUP BY email HAVING COUNT(*) > 1` |
-| Q5 | Customers whose first name starts with "A" | `WHERE first_name LIKE 'A%'` |
+| Endpoint | Key SQL |
+|---|---------|
+| `10-most-recent` | `ORDER BY created_at DESC LIMIT 10` |
+| `customers-with-gmail` | `WHERE email LIKE '%@gmail.com'` |
+| `customers-per-month` | `DATE_TRUNC('month', created_at)` + `GROUP BY`, filtered to 2025 |
+| `duplicate-emails` | `GROUP BY email HAVING COUNT(*) > 1` |
+| `names-starting-with-a` | `WHERE first_name LIKE 'A%'` |
 
 The `.sql` file is for reference only. The actual queries are hardcoded in `query-service/src/routes/queries.js`.
 

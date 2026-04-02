@@ -70,11 +70,11 @@
 │                │    GET /queries/:id     │                        │   │                              │
 │    Client      │───────────────────────▶ │   query-service        │──▶│   SQL Queries                │
 │    (curl)      │                         │   (port 3002)          │   │                              │
-│                │ ◀─────────────────────  │                        │   │   Q1: 10 most recent         │
-│                │    JSON results         │   GET /queries/q1..q5  │   │   Q2: @gmail.com             │
-│                │                         │                        │   │   Q3: per month 2025         │
-└────────────────┘                         └────────────────────────┘   │   Q4: dup emails             │
-                                                                        │   Q5: name starts with A     │
+│                │ ◀─────────────────────  │                        │   │   10-most-recent             │
+│                │    JSON results         │   GET /queries/:id     │   │   customers-with-gmail       │
+│                │                         │                        │   │   customers-per-month        │
+└────────────────┘                         └────────────────────────┘   │   duplicate-emails           │
+                                                                        │   names-starting-with-a      │
                                                                         │                              │
                                                                         └──────────────────────────────┘
 

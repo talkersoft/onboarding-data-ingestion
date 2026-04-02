@@ -4,20 +4,20 @@ const db = require('../db');
 const router = express.Router();
 
 const QUERIES = {
-  q1: {
+  '10-most-recent': {
     description: '10 most recently onboarded customers',
     sql: `SELECT id, correlation_id, account_no, first_name, last_name, email, address, notes, description, created_at
            FROM customers
            ORDER BY created_at DESC
            LIMIT 10`,
   },
-  q2: {
+  'customers-with-gmail': {
     description: 'Customers with @gmail.com emails',
     sql: `SELECT id, correlation_id, account_no, first_name, last_name, email, address, notes, description, created_at
            FROM customers
            WHERE email LIKE '%@gmail.com'`,
   },
-  q3: {
+  'customers-per-month': {
     description: 'Customer count per month in 2025',
     sql: `SELECT DATE_TRUNC('month', created_at) AS month, COUNT(*) AS customer_count
            FROM customers
@@ -25,14 +25,14 @@ const QUERIES = {
            GROUP BY DATE_TRUNC('month', created_at)
            ORDER BY month`,
   },
-  q4: {
+  'duplicate-emails': {
     description: 'Duplicate email addresses',
     sql: `SELECT email, COUNT(*) AS occurrences
            FROM customers
            GROUP BY email
            HAVING COUNT(*) > 1`,
   },
-  q5: {
+  'names-starting-with-a': {
     description: 'Customers whose first name starts with A',
     sql: `SELECT id, correlation_id, account_no, first_name, last_name, email, address, notes, description, created_at
            FROM customers
